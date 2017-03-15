@@ -859,7 +859,7 @@ func (u *Unmarshaler) unmarshalValue(target reflect.Value, inputValue json.RawMe
 	if targetType.Kind() == reflect.Struct {
 		var jsonFields map[string]json.RawMessage
 		if err := json.Unmarshal(inputValue, &jsonFields); err != nil {
-			return err
+			return correctJsonType(err, targetType)
 		}
 
 		consumeField := func(prop *proto.Properties) (json.RawMessage, bool) {
@@ -897,7 +897,7 @@ func (u *Unmarshaler) unmarshalValue(target reflect.Value, inputValue json.RawMe
 			}
 
 			if err := u.unmarshalValue(target.Field(i), valueForField, sprops.Prop[i]); err != nil {
-				return err
+				return newFieldError(sprops.Prop[i].Name, err)
 			}
 		}
 		// Check for any oneof fields.
@@ -910,7 +910,7 @@ func (u *Unmarshaler) unmarshalValue(target reflect.Value, inputValue json.RawMe
 				nv := reflect.New(oop.Type.Elem())
 				target.Field(oop.Field).Set(nv)
 				if err := u.unmarshalValue(nv.Elem().Field(0), raw, oop.Prop); err != nil {
-					return err
+					return newFieldError(oop.Prop.Name, err)
 				}
 			}
 		}
@@ -935,13 +935,7 @@ func (u *Unmarshaler) unmarshalValue(target reflect.Value, inputValue json.RawMe
 			}
 		}
 		if !u.AllowUnknownFields && len(jsonFields) > 0 {
-			// Pick any field to be the scapegoat.
-			var f string
-			for fname := range jsonFields {
-				f = fname
-				break
-			}
-			return fmt.Errorf("unknown field %q in %v", f, targetType)
+			return getFieldMismatchError(jsonFields, sprops)
 		}
 		return nil
 	}
@@ -950,14 +944,14 @@ func (u *Unmarshaler) unmarshalValue(target reflect.Value, inputValue json.RawMe
 	if targetType.Kind() == reflect.Slice && targetType.Elem().Kind() != reflect.Uint8 {
 		var slc []json.RawMessage
 		if err := json.Unmarshal(inputValue, &slc); err != nil {
-			return err
+			return correctJsonType(err, targetType)
 		}
 		if slc != nil {
 			l := len(slc)
 			target.Set(reflect.MakeSlice(targetType, l, l))
 			for i := 0; i < l; i++ {
 				if err := u.unmarshalValue(target.Index(i), slc[i], prop); err != nil {
-					return err
+					return newFieldError(fmt.Sprintf("[%d]", i), err)
 				}
 			}
 		}
@@ -988,14 +982,14 @@ func (u *Unmarshaler) unmarshalValue(target reflect.Value, inputValue json.RawMe
 				} else {
 					k = reflect.New(targetType.Key()).Elem()
 					if err := u.unmarshalValue(k, json.RawMessage(ks), keyprop); err != nil {
-						return err
+						return newFieldError(fmt.Sprintf("['%s']", ks), newFieldError("key", err))
 					}
 				}
 
 				// Unmarshal map value.
 				v := reflect.New(targetType.Elem()).Elem()
 				if err := u.unmarshalValue(v, raw, valprop); err != nil {
-					return err
+					return newFieldError(fmt.Sprintf("['%s']", ks), newFieldError("value", err))
 				}
 				target.SetMapIndex(k, v)
 			}
